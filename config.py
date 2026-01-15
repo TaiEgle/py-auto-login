@@ -43,10 +43,12 @@ class Config:
         """保存配置"""
         self._config = config
         try:
+            # 确保目录存在
+            self.config_file.parent.mkdir(parents=True, exist_ok=True)
             with open(self.config_file, 'w', encoding='utf-8') as f:
                 json.dump(config, f, indent=2, ensure_ascii=False)
         except Exception as e:
-            raise RuntimeError(f"保存配置文件失败: {e}")
+            raise RuntimeError(f"保存配置文件失败: {e} (路径: {self.config_file})")
     
     def _create_default(self):
         """创建默认配置"""

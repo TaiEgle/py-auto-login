@@ -56,17 +56,21 @@ def main():
     setup_signal_handlers(lock, log_file)
     
     try:
-        # 加载配置
+        # 加载配置（如果不存在会自动创建）
         config = Config(config_path)
-        if not config_path.exists():
+        config_exists = config_path.exists()
+        config_data = config.load()
+        
+        # 检查是否是首次运行（配置文件刚被创建或配置为空）
+        if not config_exists or not config.username or config.username == "你的账号":
             print("--------------------------------------------------")
             print("【首次运行提示】已在当前目录生成 config.json")
+            print(f"配置文件位置: {config_path}")
             print("请填写账号密码后重新运行程序。")
             print("--------------------------------------------------")
             time.sleep(5)
             return
         
-        config_data = config.load()
         username = config.username
         password = config.password
         slow_mo = config.slow_mo
