@@ -25,15 +25,59 @@ def main():
     
     # 检查依赖
     print("正在检查依赖...")
+    
+    # 检查 pip 是否可用（通过尝试运行 pip 命令）
+    try:
+        result = subprocess.run([sys.executable, "-m", "pip", "--version"], 
+                              capture_output=True, timeout=5)
+        if result.returncode != 0:
+            raise subprocess.CalledProcessError(result.returncode, result.args)
+        print("✓ pip 可用")
+    except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
+        print("错误：pip 未安装或不可用。请先安装 pip。")
+        print("安装方法：")
+        print(f"  - 运行: {sys.executable} -m ensurepip --upgrade")
+        print("  - 或访问: https://pip.pypa.io/en/stable/installation/")
+        sys.exit(1)
+    
+    # 检查并安装 PyInstaller
+    pyinstaller_cmd_path = None
     try:
         import PyInstaller
+        # 尝试找到 pyinstaller 可执行文件
+        import shutil
+        pyinstaller_cmd_path = shutil.which("pyinstaller")
+        if not pyinstaller_cmd_path:
+            # 如果找不到命令行工具，使用模块方式
+            pyinstaller_cmd_path = f"{sys.executable} -m PyInstaller"
+            print("✓ PyInstaller 已安装，使用模块方式运行")
+        else:
+            print("✓ PyInstaller 已安装")
     except ImportError:
-        print("错误：未安装 PyInstaller，正在安装...")
-        subprocess.run([sys.executable, "-m", "pip", "install", "pyinstaller"], check=True)
+        print("未安装 PyInstaller，正在安装...")
+        try:
+            subprocess.run([sys.executable, "-m", "pip", "install", "pyinstaller"], check=True)
+            print("✓ PyInstaller 安装成功")
+            # 安装后再次尝试找到
+            import shutil
+            pyinstaller_cmd_path = shutil.which("pyinstaller")
+            if not pyinstaller_cmd_path:
+                pyinstaller_cmd_path = f"{sys.executable} -m PyInstaller"
+        except subprocess.CalledProcessError as e:
+            print(f"❌ PyInstaller 安装失败: {e}")
+            sys.exit(1)
     
     # 构建 PyInstaller 命令（优化体积）
-    pyinstaller_cmd = [
-        "pyinstaller",
+    # 根据是否找到命令行工具选择执行方式
+    if isinstance(pyinstaller_cmd_path, str) and " -m " in pyinstaller_cmd_path:
+        # 使用模块方式：python -m PyInstaller
+        pyinstaller_cmd = [sys.executable, "-m", "PyInstaller"]
+    else:
+        # 使用命令行方式：pyinstaller
+        pyinstaller_cmd = [pyinstaller_cmd_path or "pyinstaller"]
+    
+    # 添加 PyInstaller 参数
+    pyinstaller_cmd.extend([
         "--name=auto-login",
         "--onefile",
         "--console",
@@ -41,7 +85,8 @@ def main():
         "--noconfirm",
         "--strip",  # 去除符号信息（减小体积）
         "--noupx",  # 不使用 UPX 压缩（提高兼容性，但体积稍大）
-    ]
+        "--optimize=2",  # Python 字节码优化级别
+    ])
     
     # Windows 特定选项
     if system == "Windows":
@@ -53,24 +98,11 @@ def main():
     hidden_imports = [
         "playwright.sync_api",
         "playwright._impl._driver",
-        "pytesseract",
-        "PIL",
-        "PIL.Image",
-        "PIL.ImageTk",
         "config",
         "browser_manager",
         "lock_manager",
-        "ocr_engine",
     ]
     
-    # 可选导入（检查是否安装）
-    optional_imports = ["psutil", "easyocr"]
-    for imp in optional_imports:
-        try:
-            __import__(imp)
-            hidden_imports.append(imp)
-        except ImportError:
-            pass
     
     for imp in hidden_imports:
         pyinstaller_cmd.extend(["--hidden-import", imp])
@@ -91,9 +123,15 @@ def main():
         "email",
         "http",
         "urllib3",
+        "pytesseract",
+        "PIL",
+        "easyocr",
     ]
     for exc in excludes:
         pyinstaller_cmd.extend(["--exclude-module", exc])
+    
+    # 添加要打包的主脚本文件
+    pyinstaller_cmd.append("main.py")
     
     # 执行打包
     print("正在执行打包...")
@@ -110,10 +148,9 @@ def main():
         print(f"输出目录: {Path(__file__).parent / 'dist'}")
         print()
         print("注意：")
-        print("1. 需要手动安装 Playwright 浏览器：")
-        print("   playwright install chromium")
-        print("2. 需要安装 Tesseract OCR")
-        print("3. 可能需要将浏览器和语言数据复制到 dist 目录")
+        print("1. 如果使用系统浏览器，用户需要安装 Chrome/Edge")
+        print("2. 如果需要打包浏览器，运行：playwright install chromium")
+        print("3. 然后将 browser 目录复制到 dist 目录")
     else:
         print()
         print("=" * 60)

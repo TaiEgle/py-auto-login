@@ -14,12 +14,6 @@ import signal
 from pathlib import Path
 from typing import Optional
 
-try:
-    import psutil
-    PSUTIL_AVAILABLE = True
-except ImportError:
-    PSUTIL_AVAILABLE = False
-
 if platform.system() != "Windows":
     import fcntl
 
@@ -130,13 +124,6 @@ class LockFile:
     
     def _is_process_running(self, pid: int) -> bool:
         """检查进程是否运行"""
-        if PSUTIL_AVAILABLE:
-            try:
-                return psutil.pid_exists(pid)
-            except:
-                pass
-        
-        # 兼容方法：尝试发送信号 0
         try:
             os.kill(pid, 0)
             return True

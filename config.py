@@ -53,9 +53,6 @@ class Config:
         default_config = {
             "username": "你的账号",
             "password": "你的密码",
-            "headless": False,  # 是否使用无头模式
-            "ocr_engine": "auto",  # OCR 引擎: auto, tesseract, easyocr
-            "max_retries": 10,  # 最大重试次数
             "slow_mo": 50,  # 操作延迟（毫秒）
         }
         self.save(default_config)
@@ -74,21 +71,6 @@ class Config:
     def password(self) -> str:
         """密码"""
         return self.get('password', '')
-    
-    @property
-    def headless(self) -> bool:
-        """是否无头模式"""
-        return self.get('headless', False)
-    
-    @property
-    def ocr_engine(self) -> str:
-        """OCR 引擎类型"""
-        return self.get('ocr_engine', 'auto')
-    
-    @property
-    def max_retries(self) -> int:
-        """最大重试次数"""
-        return self.get('max_retries', 10)
     
     @property
     def slow_mo(self) -> int:

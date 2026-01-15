@@ -1,411 +1,103 @@
-name: 构建和打包
+name: Build Windows EXE
 
 on:
   push:
-    tags:
-      - 'v*'
+    branches: [ main, master ]
   workflow_dispatch:
-    inputs:
-      build_windows:
-        description: '构建 Windows 版本'
-        required: false
-        default: 'true'
-        type: boolean
-      build_macos:
-        description: '构建 macOS 版本'
-        required: false
-        default: 'true'
-        type: boolean
-      build_linux:
-        description: '构建 Linux 版本'
-        required: false
-        default: 'false'
-        type: boolean
-  pull_request:
-    branches:
-      - main
-      - master
 
 jobs:
   build:
-    strategy:
-      matrix:
-        include:
-          - os: ubuntu-latest
-            python-version: '3.11'
-            name: linux
-            artifact_name: auto-login-linux-amd64
-          - os: windows-latest
-            python-version: '3.11'
-            name: windows
-            artifact_name: auto-login-windows-amd64.exe
-          - os: macos-latest
-            python-version: '3.11'
-            name: macos
-            artifact_name: auto-login-macos-amd64
-
-    runs-on: ${{ matrix.os }}
-    if: |
-      (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) ||
-      (github.event_name == 'pull_request') ||
-      (github.event_name == 'workflow_dispatch' && (
-        (matrix.name == 'windows' && (github.event.inputs.build_windows == 'true' || github.event.inputs.build_windows == '')) ||
-        (matrix.name == 'macos' && (github.event.inputs.build_macos == 'true' || github.event.inputs.build_macos == '')) ||
-        (matrix.name == 'linux' && github.event.inputs.build_linux == 'true')
-      ))
+    runs-on: windows-latest
     
     steps:
-      - name: 调试信息
-        run: |
-          echo "Event: ${{ github.event_name }}"
-          echo "Ref: ${{ github.ref }}"
-          echo "Platform: ${{ matrix.name }}"
-          echo "OS: ${{ matrix.os }}"
-          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
-            echo "Build Windows: ${{ github.event.inputs.build_windows }}"
-            echo "Build macOS: ${{ github.event.inputs.build_macos }}"
-            echo "Build Linux: ${{ github.event.inputs.build_linux }}"
-          fi
-
-      - name: 检出代码
+      - name: Checkout code
         uses: actions/checkout@v4
-
-      - name: 设置 Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
+      
+      - name: Setup Python
+        uses: actions/setup-python@v4
         with:
-          python-version: ${{ matrix.python-version }}
-
-      - name: 安装系统依赖 (Ubuntu)
-        if: matrix.os == 'ubuntu-latest'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y tesseract-ocr libtesseract-dev
-
-      - name: 安装系统依赖 (macOS)
-        if: matrix.os == 'macos-latest'
-        run: |
-          brew install tesseract
-
-      - name: 安装系统依赖 (Windows)
-        if: matrix.os == 'windows-latest'
-        run: |
-          choco install tesseract -y || echo "Chocolatey 未安装，跳过 Tesseract 安装"
-
-      - name: 安装 Python 依赖
+          python-version: '3.10'
+      
+      - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           pip install pyinstaller
-        continue-on-error: false
-
-      - name: 安装 Playwright 浏览器
+      
+      - name: Install Playwright Chromium
+        run: playwright install chromium
+      
+      - name: Prepare browser files (optional)
         run: |
-          playwright install chromium
-          playwright install-deps chromium
-
-      - name: 构建可执行文件 (Windows)
-        if: matrix.os == 'windows-latest'
-        shell: pwsh
+          python -c "from playwright.sync_api import sync_playwright; p = sync_playwright().start(); print(p.chromium.executable_path); p.stop()" > browser_path.txt
+          $browserPath = Get-Content browser_path.txt -Raw
+          $browserPath = $browserPath.Trim()
+          $browserDir = Split-Path (Split-Path $browserPath)
+          $targetDir = "browser\chromium"
+          New-Item -ItemType Directory -Force -Path $targetDir | Out-Null
+          $chromeSubDir = Get-ChildItem $browserDir | Where-Object { $_.Name -like "chrome-win*" } | Select-Object -First 1
+          if ($chromeSubDir) {
+            Copy-Item -Path $chromeSubDir.FullName -Destination "$targetDir\$($chromeSubDir.Name)" -Recurse -Force
+            echo "浏览器文件已复制到 $targetDir"
+          }
+        continue-on-error: true
+      
+      - name: Build EXE with PyInstaller
         run: |
-          Write-Host "正在构建 Windows 可执行文件..."
-          pyinstaller --name=auto-login --onefile --console --clean --noconfirm --strip `
+          pyinstaller --name=auto-login `
+            --onefile `
+            --console `
+            --clean `
+            --noconfirm `
+            --strip `
+            --optimize=2 `
             --hidden-import=playwright.sync_api `
-            --hidden-import=pytesseract `
-            --hidden-import=PIL `
+            --hidden-import=playwright._impl._driver `
             --hidden-import=config `
             --hidden-import=browser_manager `
             --hidden-import=lock_manager `
-            --hidden-import=ocr_engine `
             --exclude-module=matplotlib `
             --exclude-module=numpy `
             --exclude-module=pandas `
+            --exclude-module=scipy `
             --exclude-module=tkinter `
+            --exclude-module=pytest `
+            --exclude-module=unittest `
+            --exclude-module=pytesseract `
+            --exclude-module=PIL `
+            --exclude-module=easyocr `
+            --exclude-module=email `
+            --exclude-module=http `
+            --exclude-module=urllib3 `
             main.py
-          
-          Write-Host "✅ Windows 可执行文件构建完成"
-
-      - name: 构建可执行文件 (macOS)
-        if: matrix.os == 'macos-latest'
-        shell: bash
+      
+      - name: Calculate file sizes
         run: |
-          echo "正在构建 macOS 可执行文件..."
-          pyinstaller --name=auto-login --onefile --console --clean --noconfirm --strip \
-            --hidden-import=playwright.sync_api \
-            --hidden-import=pytesseract \
-            --hidden-import=PIL \
-            --hidden-import=config \
-            --hidden-import=browser_manager \
-            --hidden-import=lock_manager \
-            --hidden-import=ocr_engine \
-            --exclude-module=matplotlib \
-            --exclude-module=numpy \
-            --exclude-module=pandas \
-            --exclude-module=tkinter \
-            main.py
-          
-          echo "✅ macOS 可执行文件构建完成"
-          
-          # 创建 macOS .app 包（可选，使应用更像原生应用）
-          echo "正在创建 macOS .app 包..."
-          mkdir -p "AutoLogin.app/Contents/MacOS"
-          mkdir -p "AutoLogin.app/Contents/Resources"
-          
-          # 复制可执行文件
-          cp dist/auto-login "AutoLogin.app/Contents/MacOS/auto-login"
-          chmod +x "AutoLogin.app/Contents/MacOS/auto-login"
-          
-          # 创建 Info.plist
-          cat > "AutoLogin.app/Contents/Info.plist" << EOF
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0">
-          <dict>
-              <key>CFBundleExecutable</key>
-              <string>auto-login</string>
-              <key>CFBundleIdentifier</key>
-              <string>com.autologin.app</string>
-              <key>CFBundleName</key>
-              <string>AutoLogin</string>
-              <key>CFBundleVersion</key>
-              <string>1.0</string>
-              <key>CFBundleShortVersionString</key>
-              <string>1.0</string>
-              <key>LSMinimumSystemVersion</key>
-              <string>10.13</string>
-              <key>NSHighResolutionCapable</key>
-              <true/>
-          </dict>
-          </plist>
-          EOF
-          
-          echo "✅ macOS .app 包创建完成"
-
-      - name: 构建可执行文件 (Linux)
-        if: matrix.os == 'ubuntu-latest'
-        shell: bash
-        run: |
-          echo "正在构建 Linux 可执行文件..."
-          pyinstaller --name=auto-login --onefile --console --clean --noconfirm --strip \
-            --hidden-import=playwright.sync_api \
-            --hidden-import=pytesseract \
-            --hidden-import=PIL \
-            --hidden-import=config \
-            --hidden-import=browser_manager \
-            --hidden-import=lock_manager \
-            --hidden-import=ocr_engine \
-            --exclude-module=matplotlib \
-            --exclude-module=numpy \
-            --exclude-module=pandas \
-            --exclude-module=tkinter \
-            main.py
-          
-          echo "✅ Linux 可执行文件构建完成"
-
-      - name: 检查构建产物
-        shell: bash
-        run: |
-          echo "检查 dist 目录..."
-          ls -la dist/ || echo "dist 目录不存在"
-          if [ "${{ matrix.os }}" == "windows-latest" ]; then
-            if [ -f "dist/auto-login.exe" ]; then
-              echo "✅ Windows 可执行文件存在"
-              ls -lh dist/auto-login.exe
-            else
-              echo "❌ Windows 可执行文件不存在"
-              exit 1
-            fi
-          else
-            if [ -f "dist/auto-login" ]; then
-              echo "✅ 可执行文件存在"
-              ls -lh dist/auto-login
-            else
-              echo "❌ 可执行文件不存在"
-              exit 1
-            fi
-          fi
-
-      - name: 准备发布文件
-        shell: bash
-        run: |
-          mkdir -p release
-          
-          if [ "${{ matrix.os }}" == "windows-latest" ]; then
-            if [ ! -f "dist/auto-login.exe" ]; then
-              echo "❌ 错误: dist/auto-login.exe 不存在"
-              exit 1
-            fi
-            cp dist/auto-login.exe release/${{ matrix.artifact_name }}
-            echo "✅ Windows 可执行文件: ${{ matrix.artifact_name }}"
-          elif [ "${{ matrix.os }}" == "macos-latest" ]; then
-            if [ ! -f "dist/auto-login" ]; then
-              echo "❌ 错误: dist/auto-login 不存在"
-              exit 1
-            fi
-            # 复制可执行文件
-            cp dist/auto-login release/${{ matrix.artifact_name }}
-            chmod +x release/${{ matrix.artifact_name }}
-            echo "✅ macOS 可执行文件: ${{ matrix.artifact_name }}"
-            # 复制 .app 包（如果存在）
-            if [ -d "AutoLogin.app" ]; then
-              tar -czf release/auto-login-macos-amd64.app.tar.gz AutoLogin.app
-              echo "✅ macOS .app 包: auto-login-macos-amd64.app.tar.gz"
-            fi
-          else
-            if [ ! -f "dist/auto-login" ]; then
-              echo "❌ 错误: dist/auto-login 不存在"
-              exit 1
-            fi
-            cp dist/auto-login release/${{ matrix.artifact_name }}
-            chmod +x release/${{ matrix.artifact_name }}
-            echo "✅ Linux 可执行文件: ${{ matrix.artifact_name }}"
-          fi
-          
-          # 复制配置文件示例和说明
-          cp config.json.example release/
-          cp README.md release/
-          cp QUICKSTART.md release/ 2>/dev/null || true
-          
-          # 创建使用说明
-          cat > release/使用说明.txt << 'EOF'
-          ==========================================
-          Python 自动登录 - 使用说明
-          ==========================================
-          
-          Windows 用户：
-          1. 双击 auto-login-windows-amd64.exe 运行
-          2. 首次运行会自动创建 config.json 配置文件
-          3. 编辑 config.json 填写账号密码
-          4. 重新运行程序即可
-          
-          macOS 用户：
-          方式一：使用可执行文件
-          1. 在终端中运行：
-             chmod +x auto-login-macos-amd64
-             ./auto-login-macos-amd64
-          
-          方式二：使用 .app 包（推荐）
-          1. 解压 auto-login-macos-amd64.app.tar.gz
-          2. 双击 AutoLogin.app 运行
-          3. 如果提示"无法打开"，请在系统设置中允许运行
-          
-          Linux 用户：
-          1. 添加执行权限：
-             chmod +x auto-login-linux-amd64
-          2. 运行：
-             ./auto-login-linux-amd64
-          
-          注意事项：
-          - 首次运行需要安装 Playwright 浏览器：
-            playwright install chromium
-          - 需要安装 Tesseract OCR（系统级依赖）
-          - 配置文件 config.json 与程序在同一目录
-          
-          ==========================================
-          EOF
-          
-          # 创建英文说明
-          cat > release/README_EN.txt << 'EOF'
-          ==========================================
-          Python Auto Login - Usage Guide
-          ==========================================
-          
-          Windows Users:
-          1. Double-click auto-login-windows-amd64.exe to run
-          2. Config file config.json will be created on first run
-          3. Edit config.json and fill in your credentials
-          4. Run the program again
-          
-          macOS Users:
-          Method 1: Use executable
-          1. Run in terminal:
-             chmod +x auto-login-macos-amd64
-             ./auto-login-macos-amd64
-          
-          Method 2: Use .app bundle (Recommended)
-          1. Extract auto-login-macos-amd64.app.tar.gz
-          2. Double-click AutoLogin.app to run
-          3. If prompted "cannot be opened", allow it in System Settings
-          
-          Linux Users:
-          1. Add execute permission:
-             chmod +x auto-login-linux-amd64
-          2. Run:
-             ./auto-login-linux-amd64
-          
-          Notes:
-          - First run requires Playwright browser:
-            playwright install chromium
-          - Requires Tesseract OCR (system dependency)
-          - Config file config.json is in the same directory as the program
-          
-          ==========================================
-          EOF
-
-      - name: 上传构建产物
+          echo "=== 文件大小分析 ==="
+          if (Test-Path "dist\auto-login.exe") {
+            $size = (Get-Item "dist\auto-login.exe").Length / 1MB
+            echo "auto-login.exe: $([math]::Round($size, 2)) MB"
+          }
+          if (Test-Path "browser") {
+            $size = (Get-ChildItem -Path "browser" -Recurse | Measure-Object -Property Length -Sum).Sum / 1MB
+            echo "browser/: $([math]::Round($size, 2)) MB"
+          }
+      
+      - name: Upload artifacts (Full version with browser)
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.name }}-${{ matrix.python-version }}
-          path: release/
-          retention-days: 30
-
-  release:
-    needs: build
-    if: startsWith(github.ref, 'refs/tags/v')
-    runs-on: ubuntu-latest
-    
-    steps:
-      - name: 下载所有构建产物
-        uses: actions/download-artifact@v4
+          name: Auto-Login-Tool-Python-Full
+          path: |
+            dist/auto-login.exe
+            browser/
+            README.md
+          if-no-files-found: error
+      
+      - name: Upload artifacts (Lite version without browser)
+        uses: actions/upload-artifact@v4
         with:
-          path: artifacts
-
-      - name: 整理发布文件
-        shell: bash
-        run: |
-          mkdir -p release_package
-          
-          # 复制所有可执行文件
-          find artifacts -name "auto-login-*" -type f -exec cp {} release_package/ \;
-          find artifacts -name "*.app.tar.gz" -type f -exec cp {} release_package/ \;
-          
-          # 复制说明文件
-          find artifacts -name "使用说明.txt" -exec cp {} release_package/ \;
-          find artifacts -name "README_EN.txt" -exec cp {} release_package/ \;
-          find artifacts -name "README.md" -exec head -1 {} > release_package/README.md || true
-          find artifacts -name "config.json.example" -exec cp {} release_package/ \;
-          
-          # 创建版本信息
-          echo "版本: ${{ github.ref_name }}" > release_package/版本信息.txt
-          echo "构建时间: $(date)" >> release_package/版本信息.txt
-          echo "提交: ${{ github.sha }}" >> release_package/版本信息.txt
-
-      - name: 创建 Release
-        uses: softprops/action-gh-release@v1
-        with:
-          files: release_package/**
-          generate_release_notes: true
-          draft: false
-          prerelease: false
-          body: |
-            ## 📦 可执行文件下载
-            
-            ### Windows 用户
-            - 下载 `auto-login-windows-amd64.exe`
-            - 双击运行即可
-            
-            ### macOS 用户
-            - 下载 `auto-login-macos-amd64` 或 `auto-login-macos-amd64.app.tar.gz`
-            - 解压 .app 包后双击运行
-            
-            ### Linux 用户
-            - 下载 `auto-login-linux-amd64`
-            - 添加执行权限后运行
-            
-            ## 📝 使用说明
-            请查看 `使用说明.txt` 或 `README_EN.txt`
-            
-            ## ⚠️ 注意事项
-            - 首次运行需要安装 Playwright 浏览器和 Tesseract OCR
-            - 详细安装说明请查看 README.md
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          name: Auto-Login-Tool-Python-Lite
+          path: |
+            dist/auto-login.exe
+            README.md
+          if-no-files-found: error

@@ -98,41 +98,23 @@ def find_browser_executable() -> Optional[str]:
     return None
 
 
-def create_browser_launch_options(
-    headless: bool = False,
-    use_system_browser: bool = True,
-    slow_mo: int = 50
-) -> Dict[str, Any]:
+def create_browser_launch_options(slow_mo: int = 50) -> Dict[str, Any]:
     """创建浏览器启动选项
     
     Args:
-        headless: 是否使用无头模式（减少资源占用）
-        use_system_browser: 是否优先使用系统浏览器
         slow_mo: 操作延迟（毫秒）
     
     Returns:
         启动选项字典
     """
     options = {
-        'headless': headless,
+        'headless': False,
         'slow_mo': slow_mo,
     }
     
-    if use_system_browser:
-        browser_path = find_browser_executable()
-        if browser_path:
-            options['executable_path'] = browser_path
-    
-    # 优化启动参数（减少资源占用）
-    if headless:
-        # 无头模式下的优化
-        options['args'] = [
-            '--no-sandbox',
-            '--disable-setuid-sandbox',
-            '--disable-dev-shm-usage',
-            '--disable-gpu',
-            '--disable-software-rasterizer',
-        ]
+    browser_path = find_browser_executable()
+    if browser_path:
+        options['executable_path'] = browser_path
     
     return options
 
@@ -140,8 +122,7 @@ def create_browser_launch_options(
 class BrowserManager:
     """浏览器管理器"""
     
-    def __init__(self, headless: bool = False, slow_mo: int = 50):
-        self.headless = headless
+    def __init__(self, slow_mo: int = 50):
         self.slow_mo = slow_mo
         self.playwright = None
         self.browser: Optional[Browser] = None
@@ -156,13 +137,7 @@ class BrowserManager:
         from playwright.sync_api import sync_playwright
         self.playwright = sync_playwright().start()
         
-        browser_path = find_browser_executable()
-        launch_options = create_browser_launch_options(
-            headless=self.headless,
-            use_system_browser=True,
-            slow_mo=self.slow_mo
-        )
-        
+        launch_options = create_browser_launch_options(slow_mo=self.slow_mo)
         self.browser = self.playwright.chromium.launch(**launch_options)
         self.context = self.browser.new_context(viewport={'width': 1280, 'height': 800})
         self.page = self.context.new_page()
